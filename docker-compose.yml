@@ -1,24 +1,32 @@
 # Nginx Proxy Manager behind a Cloudflare Tunnel, with cf-sync creating the
-# Cloudflare DNS records and tunnel routes for every host you add in NPM.
-# Copy .env.example to .env, fill it in, then: docker compose up -d
+# Cloudflare DNS records (and tunnel routes) for every host you add in NPM.
+#
+#   docker compose up -d && docker compose logs -f cloudflared
+#
+# With no .env, cloudflared prints a Cloudflare login link: click it and pick
+# your domain. To use dashboard tokens instead, see .env.example.
 services:
   nginx-proxy-manager:
     image: jc21/nginx-proxy-manager:latest
     restart: unless-stopped
     ports:
       - "81:81"         # NPM admin UI. Keep it off the internet (LAN/VPN only).
-      # - "80:80"       # Only needed if you also want to serve the LAN directly.
+      # - "80:80"       # Only needed to also serve sites directly on the LAN.
       # - "443:443"
     volumes:
       - ./data:/data
       - ./letsencrypt:/etc/letsencrypt
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: ghcr.io/gauravsuman007/npm-cf-sync:latest
+    command: cf-tunnel
     restart: unless-stopped
-    command: tunnel --no-autoupdate run
     environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+      TUNNEL_NAME: ${TUNNEL_NAME:-cloudflare-npm}
+      ORIGIN: http://nginx-proxy-manager:80
+    volumes:
+      - ./cloudflared:/root/.cloudflared
     depends_on:
       - nginx-proxy-manager
 
@@ -26,12 +34,13 @@ services:
     image: ghcr.io/gauravsuman007/npm-cf-sync:latest
     restart: unless-stopped
     environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
-      CF_API_TOKEN: ${CF_API_TOKEN:?set CF_API_TOKEN in .env}
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+      CF_API_TOKEN: ${CF_API_TOKEN:-}
       ORIGIN: http://nginx-proxy-manager:80
       ZONES: ${ZONES:-}
       INTERVAL: ${INTERVAL:-30}
     volumes:
       - ./data:/npm:ro
+      - ./cloudflared:/root/.cloudflared:ro
     depends_on:
       - nginx-proxy-manager

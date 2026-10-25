@@ -9,7 +9,8 @@
 set -u
 
 DB=${DB:-/npm/database.sqlite}
-CERT=${CERT:-/cert.pem}
+CF_DIR=${CLOUDFLARED_DIR:-/root/.cloudflared}
+CERT=${CERT:-$CF_DIR/cert.pem}
 INTERVAL=${INTERVAL:-30}
 ORIGIN=${ORIGIN:-http://nginx-proxy-manager:80}
 ZONES=${ZONES:-}
@@ -20,25 +21,40 @@ ACCOUNT_ID=${CF_ACCOUNT_ID:-}
 API=https://api.cloudflare.com/client/v4
 
 log() { echo "$(date -u +%FT%TZ) $*"; }
-die() { log "FATAL $*"; exit 1; }
+die() { log "FATAL $*"; sleep 60; exit 1; }  # sleep: avoid a tight restart loop
 b64d() { tr -d '\n' | tr '_-' '/+' | base64 -d 2>/dev/null; }
 
 # --- credentials ----------------------------------------------------------
+# Either CF_API_TOKEN, or the cert.pem that `cloudflared tunnel login` wrote
+# (shared with the cloudflared container). The tunnel comes from TUNNEL_TOKEN,
+# TUNNEL_ID, or the config.yml cf-tunnel wrote. In login mode these appear
+# only after the user clicks the login link, so wait for them.
 CERT_ZONE=""
-if [ -z "$CF_API_TOKEN" ]; then
-  [ -r "$CERT" ] || die "set CF_API_TOKEN, or mount cloudflared's cert.pem at $CERT"
-  J=$(sed -n '/BEGIN/,/END/p' "$CERT" | grep -v -- ----- | b64d)
-  CF_API_TOKEN=$(echo "$J" | jq -r .apiToken)
-  CERT_ZONE=$(echo "$J" | jq -r .zoneID)
-  [ -n "$ACCOUNT_ID" ] || ACCOUNT_ID=$(echo "$J" | jq -r '.accountID // empty')
-fi
-
-if [ -n "$TUNNEL_TOKEN" ]; then
-  T=$(printf %s "$TUNNEL_TOKEN" | b64d)
-  [ -n "$TUNNEL_ID" ] || TUNNEL_ID=$(echo "$T" | jq -r .t)
-  [ -n "$ACCOUNT_ID" ] || ACCOUNT_ID=$(echo "$T" | jq -r .a)
-fi
-[ -n "$TUNNEL_ID" ] || die "set TUNNEL_TOKEN or TUNNEL_ID"
+[ -n "$CF_API_TOKEN" ] && USE_CERT=false || USE_CERT=true
+[ "$USE_CERT" = false ] || [ -z "$TUNNEL_TOKEN" ] || die "TUNNEL_TOKEN is set, so CF_API_TOKEN is needed too"
+load_creds() {
+  if [ "$USE_CERT" = true ]; then
+    [ -s "$CERT" ] || { WAITING="Cloudflare login ($CERT)"; return 1; }
+    J=$(sed -n '/BEGIN/,/END/p' "$CERT" | grep -v -- ----- | b64d)
+    CF_API_TOKEN=$(echo "$J" | jq -r .apiToken)
+    CERT_ZONE=$(echo "$J" | jq -r .zoneID)
+    [ -n "$ACCOUNT_ID" ] || ACCOUNT_ID=$(echo "$J" | jq -r '.accountID // empty')
+  fi
+  if [ -n "$TUNNEL_TOKEN" ]; then
+    T=$(printf %s "$TUNNEL_TOKEN" | b64d)
+    [ -n "$TUNNEL_ID" ] || TUNNEL_ID=$(echo "$T" | jq -r .t)
+    [ -n "$ACCOUNT_ID" ] || ACCOUNT_ID=$(echo "$T" | jq -r .a)
+  fi
+  if [ -z "$TUNNEL_ID" ] && [ -s "$CF_DIR/config.yml" ]; then
+    TUNNEL_ID=$(sed -n 's/^tunnel: *//p' "$CF_DIR/config.yml" | tr -d "\"' ")
+  fi
+  [ -n "$TUNNEL_ID" ] || { WAITING="the tunnel to be created ($CF_DIR/config.yml)"; return 1; }
+}
+WAITING=""
+until load_creds; do
+  log "waiting for $WAITING; see the cloudflared container's logs for the login link"
+  sleep 10
+done
 
 # Remotely-managed tunnels (created in the dashboard, run with a token) take
 # their routing from Cloudflare, so we maintain it. Locally-managed tunnels
