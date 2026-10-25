@@ -16,9 +16,6 @@ services:
     volumes:
       - ./data:/data
       - ./letsencrypt:/etc/letsencrypt
-    extra_hosts:
-      # Lets proxy hosts forward to "host.docker.internal:<published port>".
-      - "host.docker.internal:host-gateway"
 
   cloudflared:
     image: ghcr.io/gauravsuman007/npm-cf-sync:latest
