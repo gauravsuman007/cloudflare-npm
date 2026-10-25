@@ -1,0 +1,37 @@
+# Nginx Proxy Manager behind a Cloudflare Tunnel, with cf-sync creating the
+# Cloudflare DNS records and tunnel routes for every host you add in NPM.
+# Copy .env.example to .env, fill it in, then: docker compose up -d
+services:
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:latest
+    restart: unless-stopped
+    ports:
+      - "81:81"         # NPM admin UI. Keep it off the internet (LAN/VPN only).
+      # - "80:80"       # Only needed if you also want to serve the LAN directly.
+      # - "443:443"
+    volumes:
+      - ./data:/data
+      - ./letsencrypt:/etc/letsencrypt
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
+    depends_on:
+      - nginx-proxy-manager
+
+  cf-sync:
+    image: ghcr.io/gauravsuman007/npm-cf-sync:latest
+    restart: unless-stopped
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
+      CF_API_TOKEN: ${CF_API_TOKEN:?set CF_API_TOKEN in .env}
+      ORIGIN: http://nginx-proxy-manager:80
+      ZONES: ${ZONES:-}
+      INTERVAL: ${INTERVAL:-30}
+    volumes:
+      - ./data:/npm:ro
+    depends_on:
+      - nginx-proxy-manager
