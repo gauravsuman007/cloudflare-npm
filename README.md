@@ -86,10 +86,13 @@ up in the dashboard.
    to change it).
 2. **Hosts → Proxy Hosts → Add Proxy Host**
    - **Domain Names:** `app.example.com`
-   - **Scheme / Forward Hostname / Port:** where the service listens, as seen from inside the NPM
-     container. For a service on the same machine use the Docker host's address (e.g. the
-     `nginx-proxy-manager` network's gateway, often `172.17.0.1`–`172.31.0.1`, or the host's LAN
-     IP); for a container on the same Docker network, use its container name.
+   - **Scheme:** `http` (or whatever the service speaks).
+   - **Forward Hostname / IP:** `host.docker.internal` — the machine NPM runs on.
+   - **Forward Port:** the port the service is published on (the left side of its `ports:` mapping,
+     e.g. `8050` for `8050:8000`). Anything reachable on the host works, Docker or not.
+
+     (Containers on the same Docker network as NPM can also be reached by container name and their
+     internal port.)
    - Turn on **Block Common Exploits** and **Websockets Support**.
    - **SSL tab: leave it on "None"** with Force SSL off. Cloudflare handles HTTPS at its edge and
      the tunnel speaks plain HTTP to NPM; forcing SSL in NPM causes a redirect loop.
